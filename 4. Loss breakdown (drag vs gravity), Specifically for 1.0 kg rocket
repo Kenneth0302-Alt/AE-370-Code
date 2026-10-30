@@ -1,0 +1,30 @@
+flights = sweeps[1.0]
+drag = np.array([f.drag_loss for f in flights])
+grav = np.array([f.grav_loss for f in flights])
+apo  = np.array([f.apogee    for f in flights])
+dv_thrust = np.array([f.thrust_dv for f in flights])
+
+# Closure check: thrust dv = drag loss + gravity loss
+print(f"Max |thrust_dv - (drag + gravity)| over sweep: {np.max(np.abs(dv_thrust - drag - grav)):.2e} m/s")
+print(f"Drag + gravity ranges from {np.min(drag + grav):.1f} to {np.max(drag + grav):.1f} m/s")
+
+fig, ax1 = plt.subplots(figsize=(9, 5))
+ax1.plot(burn_times, drag, label="Drag loss")
+ax1.plot(burn_times, grav, label="Gravity loss")
+ax1.plot(burn_times, drag + grav, "k--", label="Sum")
+ax1.set_xscale("log")
+ax1.set_xlabel("Burn time [s]")
+ax1.set_ylabel("Velocity loss [m/s]")
+
+ax2 = ax1.twinx()
+ax2.plot(burn_times, apo, "r", label="Apogee")
+ax2.axvline(burn_times[np.argmax(apo)], color="r", ls=":")
+ax2.set_ylabel("Apogee [m]")
+
+h1, l1 = ax1.get_legend_handles_labels()
+h2, l2 = ax2.get_legend_handles_labels()
+ax1.legend(h1 + h2, l1 + l2, loc="center right")
+plt.title("Drag vs. gravity loss, m0 = 1.0 kg")
+plt.tight_layout()
+plt.savefig("fig_loss_breakdown.png", dpi=200)
+plt.show()
