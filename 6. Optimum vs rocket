@@ -1,0 +1,14 @@
+beta = np.array([m0 / (CD * A) for m0 in m_values])       # kg/m^2
+tb_star = np.array([optimal[m0] for m0 in m_values])
+
+fig, ax = plt.subplots(figsize=(7, 4.5))
+ax.plot(beta, tb_star, "o-")
+for m0, b, t_opt in zip(m_values, beta, tb_star):
+    ax.annotate(f"{m0} kg", (b, t_opt), textcoords="offset points", xytext=(6, 4), fontsize=9)
+ax.set_xlabel(r"Ballistic coefficient $\beta = m_0/(C_D A)$ [kg/m$^2$]")
+ax.set_ylabel(r"Optimal burn time $t_b^*$ [s]")
+ax.set_title("Apogee-maximizing burn time vs rocket mass")
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig("fig_tb_opt_vs_mass.png", dpi=200)
+plt.show()
