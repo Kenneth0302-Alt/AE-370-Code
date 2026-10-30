@@ -1,3 +1,7 @@
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+5a. Self-convergence
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 refinements = np.array([1, 2, 4, 8, 16])
 R_REF = 64                                   # reference run uses 64x the baseline resolution
 
@@ -55,3 +59,114 @@ plt.show()
 
 print("\nApogee change from N=200 to N=400 (m):",
       {m0: f"{abs(conv[m0]['apogees'][1] - conv[m0]['apogees'][0]):.2e}" for m0 in m_values})
+
+
+
+
+
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+5b. Exact solution check (drag-free rocket equation)
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+m0_t, mdot_t, ve_t, T_final = 1.0, 0.02, 1200.0, 5.0
+step_counts = [10, 20, 40, 80]
+
+
+def rocket_equation_exact(t):
+    """Exact (h, v) for constant thrust, no drag, uniform gravity."""
+    m = m0_t - mdot_t * t
+    v = ve_t * np.log(m0_t / m) - g * t
+    h = (ve_t / mdot_t) * (m0_t - m - m * np.log(m0_t / m)) - 0.5 * g * t**2
+    return h, v
+
+
+def standalone_rhs(t, y, P):
+    """2-state drag-free model, written independently of the production rhs."""
+    mass = m0_t - mdot_t * t
+    return np.array([y[1], ve_t * mdot_t / mass - g])
+
+
+# Production rhs with drag switched off (CD = 0) and thrust constant from t = 0 (t_ramp = 0)
+P_prod = Rocket(m0=m0_t, mp=mdot_t * T_final, CD=0.0, A=A,
+                tb=T_final, t_ramp=0.0, Tmax=ve_t * mdot_t)
+h_ex, v_ex = rocket_equation_exact(T_final)
+
+dt_vals, err_standalone, err_production = [], [], []
+for N in step_counts:
+    dt = T_final / N
+    y_a = np.zeros(2)
+    y_b = np.zeros(5)
+    for i in range(N):
+        y_a = rk4_step(i * dt, y_a, dt, None, rhs_func=standalone_rhs)
+        y_b = rk4_step(i * dt, y_b, dt, P_prod)
+    dt_vals.append(dt)
+    err_standalone.append(np.hypot(y_a[0] - h_ex, y_a[1] - v_ex))
+    err_production.append(np.hypot(y_b[iH] - h_ex, y_b[iV] - v_ex))
+
+dt_vals = np.array(dt_vals)
+print(f"{'dt [s]':<10} {'standalone err':<16} {'production err':<16} {'order (standalone)':<20}")
+for j, dt in enumerate(dt_vals):
+    order = "—" if j == 0 else f"{np.log2(err_standalone[j-1] / err_standalone[j]):.3f}"
+    print(f"{dt:<10.4f} {err_standalone[j]:<16.3e} {err_production[j]:<16.3e} {order:<20}")
+print(f"\nImpulse state vs Tmax*t (production rhs): {abs(y_b[iJ] - P_prod.Tmax * T_final):.2e} N s")
+
+plt.figure(figsize=(8, 4))
+plt.loglog(dt_vals, err_standalone, "o-", label="Stand-alone rhs")
+plt.loglog(dt_vals, err_production, "s--", label="Production rhs (CD = 0)")
+plt.loglog(dt_vals, err_standalone[0] * (dt_vals / dt_vals[0])**4, ":", color="k", label=r"$\Delta t^4$ reference")
+plt.xlabel("Time Step [s]")
+plt.ylabel("Error vs exact rocket equation")
+plt.title("Exact-solution Verification")
+plt.grid(True, which="both", alpha=0.3)
+plt.legend()
+plt.tight_layout()
+plt.savefig("fig_exact_solution_check.png", dpi=200)
+plt.show()
+
+
+
+
+
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+5c. Impulse conservation
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+worst = max(abs(f.impulse - I) for m0 in m_values for f in sweeps[m0])
+print(f"Max |J(t_b) - I| over all {len(m_values) * len(burn_times)} flights: {worst:.2e} N s")
+
+
+
+
+
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+5d. Stability check
+#///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+def stability_number(tb, m0):
+    """Return (max |lambda| along the trajectory [1/s], max |lambda| * dt_max)."""
+    f = simulate(tb, m0=m0, keep_traj=True)
+    t, h, v = f.traj_t, f.traj_y[:, iH], f.traj_y[:, iV]
+    mass = m0 - mp * np.minimum(t, tb) / tb
+    rho  = rho0 * np.exp(-h / H)
+    a_v  = -rho * CD * A * np.abs(v) / mass                  # d(accel)/dv
+    a_h  = 0.5 * rho * CD * A * v * np.abs(v) / (H * mass)   # d(accel)/dh  = D/(m H)
+    disc = np.sqrt((a_v**2 + 4 * a_h).astype(complex))       # eigenvalues of [[0,1],[a_h,a_v]]
+    lam  = np.maximum(np.abs((a_v + disc) / 2), np.abs((a_v - disc) / 2))
+    dt_max = max((tb - t_ramp) / N_BURN, DT_COAST)
+    return lam.max(), lam.max() * dt_max
+
+
+results = [(m0, tb, *stability_number(tb, m0)) for m0 in m_values for tb in burn_times[::7]]
+m_w, tb_w, lam_w, sn_w = max(results, key=lambda r: r[3])
+print(f"Worst case over {len(results)} flights: m0 = {m_w} kg, tb = {tb_w:.2f} s")
+print(f"  max |lambda| = {lam_w:.3f} 1/s,  |lambda|*dt = {sn_w:.4f}  (limit 2.785)")
+
+
+
+
+
+
+
+
+
+
