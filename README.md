@@ -11,10 +11,10 @@ The repository contains the complete source code, divided into six sections:
 2. Model + RK4 solver 
 3. Burn-time sweep 
 4. Loss breakdown/analysis
-5. Verification 
+5. Verification --> This section has four parts, which are included inside the Verification and clearly demarcated visually to show which part it is. 
 6. Optimum vs rocket
 
 
 **How to Run**
 
-download or fork the repository, then download/paste the files in order onto Jupyter notebook to run the code. 
+Download or fork the repository, then download/paste the files in order into a Jupyter notebook to run the code. Make sure each section has its own code box; otherwise, running the entire code in one code box will produce multiple graphs next to each other. For 5. Verification, paste each subsection in their own unique code box for clarity of result when running the code. 
