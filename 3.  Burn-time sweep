@@ -1,0 +1,28 @@
+sweeps  = {}   # m0 -> list of Flight, one per burn time
+optimal = {}   # m0 -> t_b* [s]
+
+plt.figure(figsize=(9, 5))
+for m0 in m_values:
+    sweeps[m0] = [simulate(tb, m0=m0) for tb in burn_times]
+    apogees = np.array([f.apogee for f in sweeps[m0]])
+    best = np.argmax(apogees)
+    optimal[m0] = burn_times[best]
+    print(f"Mass: {m0:.1f} kg | Best tb: {burn_times[best]:.3f} s | Max Apogee: {apogees[best]:.2f} m")
+
+    line, = plt.plot(burn_times, apogees, label=f"m = {m0} kg")
+    plt.plot(burn_times[best], apogees[best], "o", color=line.get_color())
+
+plt.xscale("log")
+plt.xlabel("Burn Time [s]")
+plt.ylabel("Apogee [m]")
+plt.title("Rocket Apogee vs Burn Time Across Masses")
+plt.grid(True, which="both", alpha=0.3)
+plt.legend()
+plt.tight_layout()
+plt.savefig("fig_apogee_vs_burn_time.png", dpi=200)
+plt.show()
+
+# Numbers quoted in the report for the 1.0 kg rocket at the ends of the sweep
+f_short, f_long = sweeps[1.0][0], sweeps[1.0][-1]
+print(f"\n1.0 kg: tb = {burn_times[0]:.1f} s -> {f_short.apogee:.2f} m,  "
+      f"tb = {burn_times[-1]:.1f} s -> {f_long.apogee:.2f} m")
