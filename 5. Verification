@@ -1,0 +1,57 @@
+refinements = np.array([1, 2, 4, 8, 16])
+R_REF = 64                                   # reference run uses 64x the baseline resolution
+
+
+def convergence_study(m0, tb):
+    """Apogees at N = 200*r for each r, plus the fine reference apogee."""
+    h_ref = simulate(tb, m0=m0, N=N_BURN * R_REF, dt_coast=DT_COAST / R_REF).apogee
+    Ns    = N_BURN * refinements
+    dts   = (tb - t_ramp) / Ns               # burn-phase step size
+    apogees = np.array([simulate(tb, m0=m0, N=N, dt_coast=DT_COAST / r).apogee
+                        for N, r in zip(Ns, refinements)])
+    return dict(h_ref=h_ref, Ns=Ns, dts=dts, apogees=apogees,
+                errors=np.abs(apogees - h_ref))
+
+
+conv = {}
+for m0 in m_values:
+    tb = optimal[m0]
+    c = conv[m0] = convergence_study(m0, tb)
+    print(f"\nMass = {m0:.1f} kg | Optimal tb = {tb:.3f} s | h_ref = {c['h_ref']:.8f} m")
+    print(f"{'N steps':<10} {'dt [s]':<12} {'Apogee [m]':<15} {'Error [m]':<12} {'Order':<8}")
+    print("-" * 57)
+    for j, (N, dt, h, err) in enumerate(zip(c["Ns"], c["dts"], c["apogees"], c["errors"])):
+        order = "—" if j == 0 else f"{np.log2(c['errors'][j-1] / err):.2f}"
+        print(f"{N:<10d} {dt:<12.6f} {h:<15.8f} {err:<12.3e} {order:<8}")
+
+# --- Figure: error vs dt, with a dt^4 reference line anchored to the 1.0 kg case
+plt.figure(figsize=(9, 5))
+for m0 in m_values:
+    plt.loglog(conv[m0]["dts"], conv[m0]["errors"], "o-", label=f"m = {m0} kg")
+d, e = conv[1.0]["dts"], conv[1.0]["errors"]
+plt.loglog(d, e[0] * (d / d[0])**4, "k--", label=r"4th-order ($\Delta t^4$)")
+plt.xlabel(r"Burn-phase Step Size $\Delta t$ [s]")
+plt.ylabel("Apogee Error [m]")
+plt.title("RK4 Convergence Study Across All Mass Configurations")
+plt.grid(True, which="both", alpha=0.3)
+plt.legend()
+plt.tight_layout()
+plt.savefig("fig_convergence_error.png", dpi=200)
+plt.show()
+
+# --- Figure: change in apogee between successive refinements (no reference needed)
+plt.figure(figsize=(9, 5))
+for m0 in m_values:
+    changes = np.abs(np.diff(conv[m0]["apogees"]))
+    plt.loglog(conv[m0]["Ns"][:-1], changes, "o-", label=f"m = {m0} kg")
+plt.xlabel("Burn-phase RK4 steps, N")
+plt.ylabel("Change from next refinement [m]")
+plt.title("Successive Apogee Changes Across All Masses")
+plt.grid(True, which="both", alpha=0.3)
+plt.legend(fontsize=9)
+plt.tight_layout()
+plt.savefig("fig_successive_changes.png", dpi=200)
+plt.show()
+
+print("\nApogee change from N=200 to N=400 (m):",
+      {m0: f"{abs(conv[m0]['apogees'][1] - conv[m0]['apogees'][0]):.2e}" for m0 in m_values})
