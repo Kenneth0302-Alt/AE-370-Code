@@ -1,0 +1,127 @@
+iH, iV, iJ, iDRAG, iTHRUST = range(5)    # indices into the state vector
+
+
+@dataclass
+class Rocket:
+    """Everything the right-hand side needs for one flight."""
+    m0: float        # wet mass [kg]
+    mp: float        # propellant mass [kg]
+    CD: float        # drag coefficient
+    A: float         # frontal area [m^2]
+    tb: float        # burn time [s]
+    t_ramp: float    # thrust ramp time [s]
+    Tmax: float      # plateau thrust [N]
+    burning: bool = True   # set False for the coast phase (thrust = 0)
+
+
+def thrust(t, P):
+    """Piecewise thrust: linear ramp, constant plateau, zero after burnout."""
+    if not P.burning:
+        return 0.0
+    t = min(t, P.tb)                 # k4 of the last burn step lands exactly on tb
+    if t < P.t_ramp:
+        return P.Tmax * t / P.t_ramp
+    return P.Tmax
+
+
+def rhs(t, y, P):
+    """dy/dt for y = [h, v, J, dv_drag, dv_thrust]."""
+    h, v = y[iH], y[iV]
+    t_burned = min(max(t, 0.0), P.tb)
+    mass = P.m0 - P.mp * t_burned / P.tb                       # linear mass loss
+    T = thrust(t, P)
+    drag = 0.5 * rho0 * np.exp(-h / H) * P.CD * P.A * v * abs(v)
+    return np.array([v,                        # dh/dt
+                     (T - drag) / mass - g,    # dv/dt
+                     T,                        # dJ/dt
+                     drag / mass,              # drag deceleration
+                     T / mass])                # thrust acceleration
+
+
+def rk4_step(t, y, dt, P, rhs_func=rhs):
+    """One classical RK4 step from t to t + dt."""
+    k1 = rhs_func(t,        y,               P)
+    k2 = rhs_func(t + dt/2, y + dt*k1/2,     P)
+    k3 = rhs_func(t + dt/2, y + dt*k2/2,     P)
+    k4 = rhs_func(t + dt,   y + dt*k3,       P)
+    return y + dt * (k1 + 2*k2 + 2*k3 + k4) / 6
+
+
+def march(P, y, t_start, t_end, n_steps, log=None):
+    """Take n_steps equal RK4 steps from t_start to t_end, so both phase
+    endpoints are step boundaries and no step straddles a thrust kink."""
+    dt = (t_end - t_start) / n_steps
+    for i in range(n_steps):
+        y = rk4_step(t_start + i * dt, y, dt, P)
+        if log is not None:
+            log.append((t_start + (i + 1) * dt, y))
+    return y
+
+
+@dataclass
+class Flight:
+    """Results of one simulated flight."""
+    apogee: float        # max altitude [m]
+    t_apogee: float      # time of apogee [s]
+    t_lift: float        # lift-off time [s]
+    impulse: float       # J at burnout [N s]; should equal I
+    drag_loss: float     # velocity lost to drag, lift-off to apogee [m/s]
+    grav_loss: float     # velocity lost to gravity, lift-off to apogee [m/s]
+    thrust_dv: float     # velocity gained from thrust, lift-off to apogee [m/s]
+    traj_t: np.ndarray = None   # only filled if keep_traj=True
+    traj_y: np.ndarray = None
+
+
+def simulate(tb, m0=1.0, N=N_BURN, dt_coast=DT_COAST, keep_traj=False):
+    """Fly one rocket with burn time tb and return a Flight.
+
+    Phases (every RK4 step stays inside one phase):
+      1. ramp      [t_lift, t_ramp]   thrust rises linearly
+      2. plateau   [t_ramp, tb]       constant thrust
+      3. coast     tb -> apogee       thrust = 0, stops when v changes sign
+    The apogee is located by quadratic interpolation inside the final coast step.
+    """
+    if tb <= t_ramp:
+        raise ValueError("Burn time must exceed ramp time.")
+
+    Tmax = I / (tb - t_ramp / 2)
+    P = Rocket(m0=m0, mp=mp, CD=CD, A=A, tb=tb, t_ramp=t_ramp, Tmax=Tmax)
+
+    # Lift-off: first instant thrust equals weight (rocket sits on the pad until then).
+    t_lift = m0 * g / (Tmax / t_ramp + mp * g / tb)
+    if t_lift >= t_ramp:
+        raise ValueError("Thrust too low for liftoff during ramp.")
+
+    # Impulse already delivered while on the pad: integral of Tmax*t/t_ramp from 0 to t_lift.
+    y = np.array([0.0, 0.0, 0.5 * Tmax * t_lift**2 / t_ramp, 0.0, 0.0])
+    log = [(t_lift, y)] if keep_traj else None
+
+    y = march(P, y, t_lift, t_ramp, max(N // 10, 5), log)    # 1. ramp
+    y = march(P, y, t_ramp, tb,     N,               log)    # 2. plateau
+    impulse_at_burnout = y[iJ]
+
+    P.burning = False                                         # 3. coast
+    t = tb
+    for _ in range(2_000_000):
+        y_next = rk4_step(t, y, dt_coast, P)
+        if log is not None:
+            log.append((t + dt_coast, y_next))
+        if y_next[iV] <= 0.0:
+            # v crossed zero inside this step: interpolate to the apogee.
+            frac  = y[iV] / (y[iV] - y_next[iV])             # fraction of the step
+            s     = frac * dt_coast
+            accel = (y_next[iV] - y[iV]) / dt_coast
+            apogee = y[iH] + y[iV] * s + 0.5 * accel * s**2
+            blend = lambda k: y[k] + frac * (y_next[k] - y[k])   # linear blend of integrals
+            return Flight(
+                apogee=apogee, t_apogee=t + s, t_lift=t_lift,
+                impulse=impulse_at_burnout,
+                drag_loss=blend(iDRAG),
+                grav_loss=g * (t + s - t_lift),
+                thrust_dv=blend(iTHRUST),
+                traj_t=np.array([p[0] for p in log]) if keep_traj else None,
+                traj_y=np.array([p[1] for p in log]) if keep_traj else None)
+        y = y_next
+        t += dt_coast
+
+    raise RuntimeError("Apogee not reached.")
